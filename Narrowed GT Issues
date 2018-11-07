@@ -1,0 +1,26 @@
+updateItemStack - GT_utility
+RA - GT_Values
+copyAmount - GT_Utility
+
+
+GT_RecipeAdder -> GT_Recipe -> GT_Utility:
+	areStacksEqual - Should Be Okay (net.minecraft.Items)
+	areUnificationsEqual - Should Be Okay (GT_OreDictUnificator.get())
+	copyMetaData - Should Be Okay (net.minecraft.Items)
+	copyAmountAndMetaData - Should Be Okay (net.minecraft.Items)
+	getWrittenBook - Should Be Okay (GregTech_API.sBookList -- concurrentHM)
+	getContainerItem - Should Be Okay (ItemList -- enum)
+	fillFluidContainer - Should Be Okay (GT_ModHandler.isWater)
+
+CONCURRENT_MODIFCATION_EXCEPTION Throwers:
+GT_Utilitiy: 
+	- methods involving the IC2 API
+	- methods involving furnace recipes
+	
+
+gregtech.api.util.GT_Utility.removeSimpleIC2MachineRecipe
+gregtech.api.util.GT_ModHandler.removeFurnaceSmelting
+gregtech.api.util.GT_ModHandler.getSmeltingOutput
+gregtech.api.util.GT_ModHandler.removeRecipeByOutput
+gregtech.api.util.GT_Recipe$GT_Recipe_Map.findRecipe
+gregtech.api.util.GT_Recipe$GT_Recipe_Map.addRecipe

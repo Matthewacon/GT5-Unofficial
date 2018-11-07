@@ -1250,8 +1250,10 @@ public class GT_ModHandler {
         boolean rReturn = false;
         ArrayList<IRecipe> tList = (ArrayList<IRecipe>) CraftingManager.getInstance().getRecipeList();
         aOutput = GT_OreDictUnificator.get(aOutput);
-        int tList_sS=tList.size();
-        for (int i = 0; i < tList_sS; i++) {
+//        int tList_sS=tList.size();
+//        for (int i = 0; i < tList_sS; i++) {
+        int i = -1;
+        while ((i+=1) < tList.size()) {
             IRecipe tRecipe = tList.get(i);
             if (aNotRemoveShapelessRecipes && (tRecipe instanceof ShapelessRecipes || tRecipe instanceof ShapelessOreRecipe))
                 continue;
@@ -1262,10 +1264,12 @@ public class GT_ModHandler {
             }
             ItemStack tStack = tRecipe.getRecipeOutput();
             if ((!(tRecipe instanceof IGT_CraftingRecipe) || ((IGT_CraftingRecipe) tRecipe).isRemovable()) && GT_Utility.areStacksEqual(GT_OreDictUnificator.get(tStack), aOutput, aIgnoreNBT)) {
-                tList.remove(i--); tList_sS=tList.size();
+                tList.remove(i--);
+//                tList_sS = tList.size();
                 rReturn = true;
             }
         }
+//        }
         return rReturn;
     }
 

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static gregtech.api.enums.GT_Values.*;
 
@@ -30,8 +31,8 @@ import static gregtech.api.enums.GT_Values.*;
  * P.S. It is intended to be named "Unificator" and not "Unifier", because that sounds more awesome.
  */
 public class GT_OreDictUnificator {
-    private static final /*ConcurrentHash*/Map<String, ItemStack> sName2StackMap = new /*ConcurrentHash*/HashMap<String, ItemStack>();
-    private static final /*ConcurrentHash*/Map<GT_ItemStack, ItemData> sItemStack2DataMap = new /*ConcurrentHash*/HashMap<GT_ItemStack, ItemData>();
+    private static final /*ConcurrentHash*/Map<String, ItemStack> sName2StackMap = new /*ConcurrentHash*/ConcurrentHashMap<>();
+    private static final /*ConcurrentHash*/Map<GT_ItemStack, ItemData> sItemStack2DataMap = new /*ConcurrentHash*/ConcurrentHashMap<GT_ItemStack, ItemData>();
     private static final GT_HashSet<GT_ItemStack> sNoUnificationList = new GT_HashSet<GT_ItemStack>();
     public static volatile int VERSION = 509;
     private static int isRegisteringOre = 0, isAddingOre = 0;

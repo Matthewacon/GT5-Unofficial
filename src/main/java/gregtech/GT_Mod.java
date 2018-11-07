@@ -15,10 +15,7 @@ import gregtech.api.objects.ItemData;
 import gregtech.api.objects.MaterialStack;
 import gregtech.api.objects.XSTR;
 import gregtech.api.util.*;
-import gregtech.common.GT_DummyWorld;
-import gregtech.common.GT_Network;
-import gregtech.common.GT_Proxy;
-import gregtech.common.GT_RecipeAdder;
+import gregtech.common.*;
 import gregtech.common.entities.GT_Entity_Arrow;
 import gregtech.common.entities.GT_Entity_Arrow_Potion;
 import gregtech.common.items.armor.components.LoadArmorComponents;
@@ -54,7 +51,9 @@ import net.minecraftforge.oredict.OreDictionary;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.*;
+import java.lang.reflect.Field;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -94,13 +93,30 @@ public class GT_Mod implements IGT_Mod {
         GT_Values.DW = new GT_DummyWorld();
         GT_Values.NW = new GT_Network();
         GregTech_API.sRecipeAdder = GT_Values.RA = new GT_RecipeAdder();
+//        GT_Values.RA_QUEUE = new GT_RecipeAdderQueue();
 
         Textures.BlockIcons.VOID.name();
         Textures.ItemIcons.VOID.name();
     }
 
+    private static final Field[] FR_FIELDS = FurnaceRecipes.class.getDeclaredFields();
+
     @Mod.EventHandler
     public void onPreLoad(FMLPreInitializationEvent aEvent) {
+        //FurnaceRecipes patch
+        for (Field f : FR_FIELDS) {
+            f.setAccessible(true);
+            if (f.getType().isAssignableFrom(Map.class)) {
+                try {
+                    Map map = (Map)f.get(FurnaceRecipes.smelting());
+                    f.set(FurnaceRecipes.smelting(), new ConcurrentHashMap<>(map));
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        //GT Preload start
         Locale.setDefault(Locale.ENGLISH);
         if (GregTech_API.sPreloadStarted) {
             return;
@@ -485,7 +501,7 @@ public class GT_Mod implements IGT_Mod {
         }
         GregTech_API.sPreloadFinished = true;
         GT_Log.out.println("GT_Mod: Preload-Phase finished!");
-        GT_Log.ore.println("GT_Mod: Preload-Phase finished!");
+//        GT_Log.ore.println("GT_Mod: Preload-Phase finished!");
         try {
             for (Runnable tRunnable : GregTech_API.sAfterGTPreload) {
                 tRunnable.run();
@@ -495,26 +511,30 @@ public class GT_Mod implements IGT_Mod {
 
     @Mod.EventHandler
     public void onLoad(FMLInitializationEvent aEvent) {
-        if (GregTech_API.sLoadStarted) {
-            return;
-        }
+        if (GregTech_API.sLoadStarted) return;
         try {
-            for (Runnable tRunnable : GregTech_API.sBeforeGTLoad) {
-                tRunnable.run();
-            }
+            for (Runnable tRunnable : GregTech_API.sBeforeGTLoad) tRunnable.run();
         } catch (Throwable e) {e.printStackTrace(GT_Log.err);}
 
         new GT_Bees();
-
         gregtechproxy.onLoad();
+        System.out.println("gregtechproxy.mSortToTheEnd = " + gregtechproxy.mSortToTheEnd);
+        System.out.println(gregtechproxy.mEvents.size());
         if (gregtechproxy.mSortToTheEnd) {
+//            long start = System.currentTimeMillis();
             new GT_ItemIterator().run();
+//            System.out.println("new GT_ItemIterator().run() took: " + (System.currentTimeMillis()-start));
+//            start = System.currentTimeMillis();
             gregtechproxy.registerUnificationEntries();
+//            System.out.println("gregtechproxy.registerUnificationEntries() took: " + (System.currentTimeMillis()-start));
+//            start = System.currentTimeMillis();
             new GT_FuelLoader().run();
+//            System.out.println("new GT_FuelLoader().run() took: " + (System.currentTimeMillis()-start));
+            //FMLCommonHandler.instance().exitJava(1,true);
         }
         GregTech_API.sLoadFinished = true;
         GT_Log.out.println("GT_Mod: Load-Phase finished!");
-        GT_Log.ore.println("GT_Mod: Load-Phase finished!");
+//        GT_Log.ore.println("GT_Mod: Load-Phase finished!");
         try {
             for (Runnable tRunnable : GregTech_API.sAfterGTLoad) {
                 tRunnable.run();
@@ -573,7 +593,11 @@ public class GT_Mod implements IGT_Mod {
 
         GT_Log.out.println("GT_Mod: Activating OreDictionary Handler, this can take some time, as it scans the whole OreDictionary");
         FMLLog.info("If your Log stops here, you were too impatient. Wait a bit more next time, before killing Minecraft with the Task Manager.", new Object[0]);
+//        System.err.println("TEST PRINTING!!!");
+//        double start = System.currentTimeMillis();
+//        System.err.println("gregtechproxy.activateOreDictHandler() - start: '" + start + "'");
         gregtechproxy.activateOreDictHandler();
+//        System.err.println("gregtechpryxy.activateOreDictHandler() - dur: '" + (System.currentTimeMillis()-start) + "'");
         FMLLog.info("Congratulations, you have been waiting long enough. Have a Cake.", new Object[0]);
         GT_Log.out.println("GT_Mod: List of Lists of Tool Recipes: "+GT_ModHandler.sSingleNonBlockDamagableRecipeList_list.toString());
         GT_Log.out.println("GT_Mod: Vanilla Recipe List -> Outputs null or stackSize <=0: " + GT_ModHandler.sVanillaRecipeList_warntOutput.toString());
@@ -817,6 +841,19 @@ public class GT_Mod implements IGT_Mod {
         GregTech_API.sAfterGTLoad = null;
         GregTech_API.sBeforeGTPostload = null;
         GregTech_API.sAfterGTPostload = null;
+
+        //FurnaceRecipes unpatch (restore default data structure just in case)
+//        for (Field f : FR_FIELDS) {
+//            f.setAccessible(true);
+//            if (f.getType().isAssignableFrom(Map.class)) {
+//                try {
+//                    Map map = (Map)f.get(FurnaceRecipes.smelting());
+//                    f.set(FurnaceRecipes.smelting(), new HashMap<>(map));
+//                } catch (IllegalAccessException e) {
+//                    e.printStackTrace();
+//                }
+//            }
+//        }
     }
 
     @Mod.EventHandler

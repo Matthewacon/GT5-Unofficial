@@ -81,6 +81,7 @@ import net.minecraftforge.oredict.ShapelessOreRecipe;
 import java.io.File;
 import java.text.DateFormat;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public abstract class GT_Proxy implements IGT_Mod, IGuiHandler, IFuelHandler {
     private static final EnumSet<OreGenEvent.GenerateMinable.EventType> PREVENTED_ORES = EnumSet.of(OreGenEvent.GenerateMinable.EventType.COAL,
@@ -91,7 +92,7 @@ public abstract class GT_Proxy implements IGT_Mod, IGuiHandler, IFuelHandler {
     public final ArrayList<String> mSoundNames = new ArrayList<String>();
     public final ArrayList<ItemStack> mSoundItems = new ArrayList<ItemStack>();
     public final ArrayList<Integer> mSoundCounts = new ArrayList<Integer>();
-    private final Collection<OreDictEventContainer> mEvents = new HashSet<OreDictEventContainer>();
+    public final Collection<OreDictEventContainer>  mEvents = new HashSet<OreDictEventContainer>();
     private final Collection<String> mIgnoredItems = new HashSet<String>(Arrays.asList(new String[]{"itemGhastTear", "itemFlint", "itemClay", "itemBucketSaltWater",
             "itemBucketFreshWater", "itemBucketWater", "itemRock", "itemReed", "itemArrow", "itemSaw", "itemKnife", "itemHammer", "itemChisel", "itemRubber",
             "itemEssence", "itemIlluminatedPanel", "itemSkull", "itemRawRubber", "itemBacon", "itemJetpackAccelerator", "itemLazurite", "itemIridium",
@@ -194,7 +195,7 @@ public abstract class GT_Proxy implements IGT_Mod, IGuiHandler, IFuelHandler {
     public boolean mEnableAllComponents = false;
     public boolean mAddGTRecipesToIC2Machines = true;
     public boolean mLowGravProcessing = false;
-    
+
     public GT_Proxy() {
         GameRegistry.registerFuelHandler(this);
         MinecraftForge.EVENT_BUS.register(this);
@@ -1199,11 +1200,11 @@ public abstract class GT_Proxy implements IGT_Mod, IGuiHandler, IFuelHandler {
     @SubscribeEvent
     public void onWorldTickEvent(TickEvent.WorldTickEvent aEvent) {
     	if(aEvent.world.provider.dimensionId == 0)
-            mTicksUntilNextCraftSound--;   
+            mTicksUntilNextCraftSound--;
         if (aEvent.side.isServer()) {
             if (this.mUniverse == null) {
                 this.mUniverse = aEvent.world;
-            }         
+            }
             if (this.isFirstServerWorldTick) {
                 File tSaveDiretory = getSaveDirectory();
                 if (tSaveDiretory != null) {
@@ -1617,60 +1618,84 @@ public abstract class GT_Proxy implements IGT_Mod, IGuiHandler, IFuelHandler {
         return this.mUniverse == null ? null : this.mUniverse.getSaveHandler().getWorldDirectory();
     }
 
+    private static final class UnificationCondition implements Runnable {
+        final String modID;
+        final OrePrefixes prefix;
+        final Materials material;
+        volatile boolean finished = false;
+        volatile Queue<OreDictEventContainer> toProcess = new ConcurrentLinkedQueue<>();
+
+        public UnificationCondition(String modID, OrePrefixes prefix, Materials material) {
+            this.modID = modID;
+            this.prefix = prefix;
+            this.material = material;
+        }
+
+        public static void process(UnificationCondition uc, OreDictEventContainer tOre) {
+            if (tOre.mModID.equalsIgnoreCase(uc.modID) && tOre.mPrefix == uc.prefix && tOre.mMaterial == uc.material) {
+                uc.toProcess.add(tOre);
+            }
+        }
+
+        @Override
+        public void run() {
+            while(!finished) {
+                OreDictEventContainer tOre = toProcess.poll();
+                if (tOre==null) continue;
+                GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
+                boolean sUnificationBool = GregTech_API.sUnification.get(ConfigCategories.specialunificationtargets+"."+tOre.mModID, tOre.mEvent.Name, true);
+                GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, sUnificationBool, true);
+                continue;
+            }
+//            System.out.println(finished);
+        }
+    }
+
     public void registerUnificationEntries() {
+//        long start = System.currentTimeMillis();
         GregTech_API.sUnification.mConfig.save();
         GregTech_API.sUnification.mConfig.load();
         GT_OreDictUnificator.resetUnificationEntries();
+//        System.out.println("sUnification load, save & resetUnificationEntries took: " + (System.currentTimeMillis()-start));
+//        start = System.currentTimeMillis();
+        List<UnificationCondition> conditions = Arrays.asList(
+                new UnificationCondition("enderio", OrePrefixes.ingot, Materials.DarkSteel),
+                new UnificationCondition("thermalfoundation", OrePrefixes.dust, Materials.Blizz),
+                new UnificationCondition("thermalfoundation", OrePrefixes.dust, Materials.Pyrotheum),
+                new UnificationCondition(aTextArsmagica2, OrePrefixes.dust, Materials.Vinteum),
+                new UnificationCondition(aTextArsmagica2, OrePrefixes.gem, Materials.BlueTopaz),
+                new UnificationCondition(aTextArsmagica2, OrePrefixes.gem, Materials.Chimerite),
+                new UnificationCondition(aTextArsmagica2, OrePrefixes.gem, Materials.Moonstone),
+                new UnificationCondition(aTextArsmagica2, OrePrefixes.gem, Materials.Sunstone),
+                new UnificationCondition("rotarycraft", OrePrefixes.ingot, Materials.HSLA),
+                new UnificationCondition("appliedenergistics2", OrePrefixes.gem, Materials.CertusQuartz),
+                new UnificationCondition("appliedenergistics2", OrePrefixes.dust, Materials.CertusQuartz)
+        );
+        conditions.forEach(uc -> new Thread(uc).start());
         for (OreDictEventContainer tOre : this.mEvents) {
             if ((!(tOre.mEvent.Ore.getItem() instanceof GT_MetaGenerated_Item)) && (tOre.mPrefix != null) && (tOre.mPrefix.mIsUnificatable) && (tOre.mMaterial != null)) {
                 boolean chkmi = tOre.mModID != null;
+                //Process OreDictEventContainers
                 if (chkmi) {
-                    if (tOre.mModID.equalsIgnoreCase("enderio") && tOre.mPrefix == OrePrefixes.ingot && tOre.mMaterial == Materials.DarkSteel) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase("thermalfoundation") && tOre.mPrefix == OrePrefixes.dust && tOre.mMaterial == Materials.Blizz) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase("thermalfoundation") && tOre.mPrefix == OrePrefixes.dust && tOre.mMaterial == Materials.Pyrotheum) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase(aTextArsmagica2) && tOre.mPrefix == OrePrefixes.dust && tOre.mMaterial == Materials.Vinteum) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase(aTextArsmagica2) && tOre.mPrefix == OrePrefixes.gem && tOre.mMaterial == Materials.BlueTopaz) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase(aTextArsmagica2) && tOre.mPrefix == OrePrefixes.gem && tOre.mMaterial == Materials.Chimerite) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase(aTextArsmagica2) && tOre.mPrefix == OrePrefixes.gem && tOre.mMaterial == Materials.Moonstone) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase(aTextArsmagica2) && tOre.mPrefix == OrePrefixes.gem && tOre.mMaterial == Materials.Sunstone) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase("rotarycraft") && tOre.mPrefix == OrePrefixes.ingot && tOre.mMaterial == Materials.HSLA) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase("appliedenergistics2") && tOre.mPrefix == OrePrefixes.gem && tOre.mMaterial == Materials.CertusQuartz) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    } else if (tOre.mModID.equalsIgnoreCase("appliedenergistics2") && tOre.mPrefix == OrePrefixes.dust && tOre.mMaterial == Materials.CertusQuartz) {
-                        GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
-                        GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, true)), true);continue;
-                    }
+                    for (UnificationCondition uc : conditions) UnificationCondition.process(uc, tOre);
+                    continue;
                 }
+//                long iStart = System.currentTimeMillis();
                 if (GT_OreDictUnificator.isBlacklisted(tOre.mEvent.Ore)) {
                     GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, true);
+//                    System.out.println("addAssociation took: " + (System.currentTimeMillis()-iStart));
                 } else {
                     GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, false);
                     GT_OreDictUnificator.set(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, (chkmi) && (GregTech_API.sUnification.get(new StringBuilder().append(ConfigCategories.specialunificationtargets).append(".").append(tOre.mModID).toString(), tOre.mEvent.Name, false)), true);
+//                    System.out.println("addAssociation and set took: " + (System.currentTimeMillis()-iStart));
                 }
             }
         }
+        //Stop all UnificationCondition threads
+        conditions.forEach(uc -> uc.finished=true);
+//        System.out.println("for took: " + (System.currentTimeMillis()-start));
         for (OreDictEventContainer tOre : this.mEvents) {
-            if (((tOre.mEvent.Ore.getItem() instanceof GT_MetaGenerated_Item)) && (tOre.mPrefix != null) && (tOre.mPrefix.mIsUnificatable)
-                    && (tOre.mMaterial != null)) {
+            if (((tOre.mEvent.Ore.getItem() instanceof GT_MetaGenerated_Item)) && (tOre.mPrefix != null) && (tOre.mPrefix.mIsUnificatable) && (tOre.mMaterial != null)) {
                 if (GT_OreDictUnificator.isBlacklisted(tOre.mEvent.Ore)) {
                     GT_OreDictUnificator.addAssociation(tOre.mPrefix, tOre.mMaterial, tOre.mEvent.Ore, true);
                 } else {
@@ -1685,23 +1710,167 @@ public abstract class GT_Proxy implements IGT_Mod, IGuiHandler, IFuelHandler {
         GT_Recipe.reInit();
     }
 
+    private static class RegisterRecipesDistributorThread extends Thread {
+        protected final LinkedList<OreDictEventContainer> tasks;
+        protected LinkedHashMap<Integer, RegisterRecipesWorker> dividedTasks = null;
+        public final int divisor = (Runtime.getRuntime().availableProcessors() > 16) ? Runtime.getRuntime().availableProcessors()/2 : Runtime.getRuntime().availableProcessors()-1;
+        public static final String canonicalName = RegisterRecipesDistributorThread.class.getCanonicalName();
+        public RegisterRecipesDistributorThread(Collection<OreDictEventContainer> events) {
+            super("Gregtech: '" + canonicalName + "'");
+            this.tasks = new LinkedList<OreDictEventContainer>(events);
+        }
+
+        public boolean workersFinished() {
+            boolean finished = true;
+            for (RegisterRecipesWorker w : dividedTasks.values()) {
+                if (finished && w.finished) continue;
+                else {finished = false; break;}
+            }
+            return finished;
+        }
+
+        public int numFinishedWorkers() {
+            int finished = 0;
+            for (RegisterRecipesWorker w : dividedTasks.values()) {
+                if (w.finished) ++finished;
+            }
+            return finished;
+        }
+    }
+
+    private static class RegisterRecipesWorker extends Thread {
+        LinkedList<OreDictEventContainer> tasks = null;
+        volatile protected boolean finished = false;
+        volatile protected ProgressManager.ProgressBar bar = null;
+        private final Thread master;
+        public RegisterRecipesWorker(List<OreDictEventContainer> tasks, Thread master) {
+            super("Gregtech: " + RegisterRecipesWorker.class.getCanonicalName());
+            this.tasks = (LinkedList)tasks;
+            this.master = master;
+        }
+
+        @Override
+        public void interrupt() {
+            this.tasks = null;
+            this.bar = null;
+            super.interrupt();
+        }
+
+        @Override
+        public void run() {
+            bar = ProgressManager.push("Register materials", tasks.size());
+            tasks.forEach(t -> {
+                try {
+                    registerRecipes(t);
+                } catch (Exception e) {
+                    e.printStackTrace();
+//                    if (e instanceof ConcurrentModificationException) {
+////                        boolean rightMethod = false;
+////                        Inner: for (StackTraceElement s : e.getStackTrace()) {
+////                            if (s.getMethodName().contains("removeSimpleIC2MachineRecipe")) rightMethod = true; break Inner;
+////                        }
+////                        if (rightMethod) {
+//                            System.err.println("LOOK");
+////                        }
+//                    }
+                    System.err.println("GregTech Ore Dictionary Handler has encountered an exception... Continuing!");
+                }
+                bar.step(t.mMaterial == null ? "" : t.mMaterial.toString());
+            });
+            finished = true;
+            ProgressManager.pop(bar);
+            try {
+                synchronized(master) {
+                    wait();
+                }
+            } catch (InterruptedException e) {
+                interrupt();
+            }
+        }
+    }
+
     public void activateOreDictHandler() {
         this.mOreDictActivated = true;
-        ProgressManager.ProgressBar progressBar = ProgressManager.push("Register materials", mEvents.size());
-        OreDictEventContainer tEvent;
-        for (Iterator i$ = this.mEvents.iterator(); i$.hasNext(); registerRecipes(tEvent)) {
-            tEvent = (OreDictEventContainer) i$.next();
-            
-            progressBar.step(tEvent.mMaterial == null ? "" : tEvent.mMaterial.toString());
+        final Thread outSide = Thread.currentThread();
+        RegisterRecipesDistributorThread waitForMe = new RegisterRecipesDistributorThread(this.mEvents) {
+            final int divided = Math.floorDiv(mEvents.size(), divisor);
+            volatile ProgressManager.ProgressBar startWorkersBar = null;
+            {
+                synchronized (outSide) {
+                    startWorkersBar = ProgressManager.push("Starting Ore Dictionary Registry Workers: ", divisor);
+                }
+            }
+
+            @Override
+            public void run() {
+                final Thread selfRef = this;
+                dividedTasks = new LinkedHashMap<Integer, RegisterRecipesWorker>() {
+                    {
+                        for (int i=1; i <= divisor; i++) {
+                            final int fI = i;
+                            System.err.println("I = " + fI);
+                            LinkedList<OreDictEventContainer> list = new LinkedList<OreDictEventContainer>() {
+                                {
+                                    int subSetIndex = fI*divided;
+                                    Add: for (int ie=((fI<divisor) ? (subSetIndex-divided) : (tasks.size()-(tasks.size()-subSetIndex)));
+                                              ie<((fI<divisor) ? (subSetIndex) : (tasks.size())); ie++) {
+                                        add(tasks.get(ie));
+                                    }
+                                }
+                            };
+                            put(i, new RegisterRecipesWorker(list, selfRef));
+                        }
+                    }
+                };
+                dividedTasks.forEach((index, worker) -> {
+                    worker.start();
+                    startWorkersBar.step(index.toString());
+                });
+                synchronized(outSide) {
+                    ProgressManager.pop(startWorkersBar);
+                }
+                W: while(true) {
+                    if (workersFinished()) break;
+                    try {
+                        sleep(500l);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                    F: for (RegisterRecipesWorker worker : dividedTasks.values()) {
+                        try {
+                            if (worker.finished && worker.getState().equals(State.WAITING)) worker.notify();
+                            else continue;
+                        } catch(Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+                System.err.println("Workers finished!");
+                dividedTasks.values().forEach(worker -> {
+                    if (worker.getState() != State.TERMINATED) {
+                        worker.interrupt();
+                    }
+                });
+//                for (RegisterRecipesWorker worker : dividedTasks.values())
+//                 System.out.println("Worker: '" + worker.getName() + "' in state: '" + worker.getState() + "'");
+                this.interrupt();
+            }
+        };
+        waitForMe.start();
+        try {
+            waitForMe.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            System.err.println("Registry Distributor in state:" + waitForMe.getState());
         }
-        ProgressManager.pop(progressBar);
+//        System.out.println(GT_Utility.queuedRSIC2MREvents.size());
     }
 
     public static final HashMap<ChunkPosition, int[]>  chunkData = new HashMap<ChunkPosition, int[]>(5000);
 
     @SubscribeEvent
     public void handleChunkSaveEvent(ChunkDataEvent.Save event)
-    {  
+    {
         ChunkPosition tPos = new ChunkPosition(event.getChunk().xPosition,event.getChunk().worldObj.provider.dimensionId,event.getChunk().zPosition);
         if(chunkData.containsKey(tPos)){
             int[] tInts = chunkData.get(tPos);

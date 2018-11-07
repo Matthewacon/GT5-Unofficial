@@ -62,6 +62,7 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.util.ForgeDirection;
 import net.minecraftforge.fluids.*;
 import net.minecraftforge.fluids.FluidContainerRegistry.FluidContainerData;
+import sun.reflect.Reflection;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -71,6 +72,7 @@ import java.text.DecimalFormatSymbols;
 import java.text.NumberFormat;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static gregtech.api.enums.GT_Values.*;
 
@@ -842,24 +844,83 @@ public class GT_Utility {
         return rReturn;
     }
 
-    public static synchronized boolean removeSimpleIC2MachineRecipe(ItemStack aInput, Map<IRecipeInput, RecipeOutput> aRecipeList, ItemStack aOutput) {
+    private static final class RemoveSimpleIC2MachineRecipeEvent {
+        final Map<IRecipeInput, RecipeOutput> aRecipeList;
+        final IRecipeInput kRemove;
+        final RecipeOutput vRemove;
+
+        public RemoveSimpleIC2MachineRecipeEvent(Map<IRecipeInput, RecipeOutput> aRecipeList, IRecipeInput kRemove, RecipeOutput vRemove) {
+            this.aRecipeList = aRecipeList;
+            this.kRemove = kRemove;
+            this.vRemove = vRemove;
+        }
+
+        public synchronized void removeSimpleIC2MachineRecipe() {
+            aRecipeList.remove(kRemove, vRemove);
+        }
+    }
+
+    public static final class SpecialArrayList<T extends RemoveSimpleIC2MachineRecipeEvent> extends ArrayList<T> {
+        //        @Override
+        public boolean add(T e, Class<?> caller) {
+//            for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
+//                if (ste.getClassName().contains("RegisterRecipesWorker")) byWorker = true; break;
+//            }
+            if (caller.getSimpleName().contains("RegisterRecipesWorker")) return super.add(e);
+            else {
+                super.add(e);
+                forEach(event -> event.removeSimpleIC2MachineRecipe());
+                clear();
+            }
+            return true;
+        }
+    }
+
+    public static final SpecialArrayList<RemoveSimpleIC2MachineRecipeEvent> queuedRSIC2MREvents =
+            new SpecialArrayList<RemoveSimpleIC2MachineRecipeEvent>();
+
+    public static synchronized boolean removeSimpleIC2MachineRecipe(final ItemStack aInput, final Map<IRecipeInput, RecipeOutput> aRecipeList, final ItemStack aOutput) {
+        Class<?> clazz = gregtech.api.util.Reflection.getCallerClass();
         if ((isStackInvalid(aInput) && isStackInvalid(aOutput)) || aRecipeList == null) return false;
-        boolean rReturn = false;
-        Iterator<Map.Entry<IRecipeInput, RecipeOutput>> tIterator = aRecipeList.entrySet().iterator();
-        aOutput = GT_OreDictUnificator.get(aOutput);
-        while (tIterator.hasNext()) {
-            Map.Entry<IRecipeInput, RecipeOutput> tEntry = tIterator.next();
-            if (aInput == null || tEntry.getKey().matches(aInput)) {
-                List<ItemStack> tList = tEntry.getValue().items;
-                if (tList != null) for (ItemStack tOutput : tList)
-                    if (aOutput == null || areStacksEqual(GT_OreDictUnificator.get(tOutput), aOutput)) {
-                        tIterator.remove();
-                        rReturn = true;
-                        break;
+        final AbstractWrapper<Boolean> rReturn = new AbstractWrapper<Boolean>(false, true);
+        ItemStack bOutput = GT_OreDictUnificator.get(aOutput);
+        new ConcurrentHashMap<IRecipeInput, RecipeOutput>() {
+            {
+                aRecipeList.keySet().forEach(key -> {
+                    put(key, aRecipeList.get(key));
+                });
+            }
+        }.forEach((k,v) -> {
+            if (aInput == null || k.matches(aInput)) {
+                List<ItemStack> tList = v.items;
+                if (tList != null)
+                    for (ItemStack tOutput : tList) {
+                        if (bOutput == null || areStacksEqual(GT_OreDictUnificator.get(tOutput), bOutput)) {
+                            queuedRSIC2MREvents.add(new RemoveSimpleIC2MachineRecipeEvent(aRecipeList, k, v), clazz);
+                            try {
+                                rReturn.wrap(true);
+                            } catch (NotMutableException e) {
+                                //Not Possible
+                            }
+                        }
                     }
             }
-        }
-        return rReturn;
+        });
+
+//        Iterator<Map.Entry<IRecipeInput, RecipeOutput>> tIterator = aRecipeList.entrySet().iterator();
+//        while (tIterator.hasNext()) {
+//            Map.Entry<IRecipeInput, RecipeOutput> tEntry = tIterator.next();
+//            if (aInput == null || tEntry.getKey().matches(aInput)) {
+//                List<ItemStack> tList = tEntry.getValue().items;
+//                if (tList != null) for (ItemStack tOutput : tList)
+//                    if (aOutput == null || areStacksEqual(GT_OreDictUnificator.get(tOutput), aOutput)) {
+//                        tIterator.remove();
+//                        rReturn = true;
+//                        break;
+//                    }
+//            }
+//        }
+        return rReturn.unwrap();
     }
 
     public static boolean addSimpleIC2MachineRecipe(ItemStack aInput, Map<IRecipeInput, RecipeOutput> aRecipeList, NBTTagCompound aNBT, Object... aOutput) {
@@ -1380,10 +1441,8 @@ public class GT_Utility {
     }
 
     public static boolean isStackInList(ItemStack aStack, Collection<GT_ItemStack> aList) {
-        if (aStack == null) {
-            return false;
-        }
-        return isStackInList(new GT_ItemStack(aStack), aList);
+        if (aStack == null) return false;
+        else return isStackInList(new GT_ItemStack(aStack), aList);
     }
 
     public static boolean isStackInList(GT_ItemStack aStack, Collection<GT_ItemStack> aList) {
